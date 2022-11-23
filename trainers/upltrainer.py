@@ -253,18 +253,32 @@ class CustomCLIP(nn.Module):
         self.cfg = cfg
 
     def forward(self, image):
-        image_features = self.image_encoder(image.type(self.dtype))
 
-        prompts = self.prompt_learner()
+        
         tokenized_prompts = self.tokenized_prompts
-        text_features = self.text_encoder(prompts, tokenized_prompts)
+        logit_scale = self.logit_scale.exp()
+        #UPL Image features
+        #image_features = self.image_encoder(image.type(self.dtype))
+        #prompts = self.prompt_learner()
+        
+        #text_features = self.text_encoder(prompts, tokenized_prompts)
+
+        #image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        #text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        #logits = logit_scale * image_features @ text_features.t()
+
+        
+        #Maple Code
+        prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
+        text_features = self.text_encoder(prompts, tokenized_prompts, deep_compound_prompts_text)
+        image_features = self.image_encoder(image.type(self.dtype), shared_ctx, deep_compound_prompts_vision)
 
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-        
-
-        logit_scale = self.logit_scale.exp()
         logits = logit_scale * image_features @ text_features.t()
+        #if self.prompt_learner.training:
+        #    return F.cross_entropy(logits, label)
+
 
         return logits, image_features, text_features
     
