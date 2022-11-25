@@ -189,7 +189,7 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None):
+    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None,design_details=None):
         super().__init__()
         self.width = width
         self.layers = layers
@@ -200,7 +200,7 @@ class Transformer(nn.Module):
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int):
+    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int,design_details):
         super().__init__()
         self.input_resolution = input_resolution
         self.output_dim = output_dim
@@ -236,6 +236,62 @@ class VisionTransformer(nn.Module):
         return x
 
 
+
+class VisionTransformer_UPL(nn.Module):
+    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int,
+                 design_details):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.output_dim = output_dim
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
+        self.VPT_shallow = True
+        scale = width ** -0.5
+        self.class_embedding = nn.Parameter(scale * torch.randn(width))
+        self.positional_embedding = nn.Parameter(scale * torch.randn((input_resolution // patch_size) ** 2 + 1, width))
+        self.ln_pre = LayerNorm(width)
+        # hyper-parameter if need to add prompt embeddings inside to the input
+        # of transformer block or not:
+        self.prompt_till_layer_visual = 0
+        self.transformer = Transformer(width, layers, heads, design_details=design_details)
+
+        self.ln_post = LayerNorm(width)
+        self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
+
+    def forward(self, x: torch.Tensor, shared_ctx, compound_deeper_prompts):
+        x = self.conv1(x)  # shape = [*, width, grid, grid]
+        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
+        x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
+        x = torch.cat(
+            [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
+             x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+        x = x + self.positional_embedding.to(x.dtype)
+
+        # After positional embeddings, we will attach prompts with the model, remember only those
+        # are trainable parameters here in whole image encoder.
+        if self.VPT_shallow:
+            visual_ctx = shared_ctx.expand(x.shape[0], -1, -1).half()
+            x = torch.cat([x, visual_ctx], dim=1)
+        else:
+            assert self.prompt_till_layer_visual == 0
+
+        # Normal code as before
+        x = self.ln_pre(x)
+
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        # Again combine the inputs, so nn.sequential can work
+        outputs = self.transformer([x, compound_deeper_prompts, 0])  # third argument is counter
+        x = outputs[0]
+        x = x.permute(1, 0, 2)  # LND -> NLD
+
+        x = self.ln_post(x[:, 0, :])
+
+        if self.proj is not None:
+            x = x @ self.proj
+
+        return x
+
+
+
 class CLIP(nn.Module):
     def __init__(self,
                  embed_dim: int,
@@ -249,11 +305,13 @@ class CLIP(nn.Module):
                  vocab_size: int,
                  transformer_width: int,
                  transformer_heads: int,
-                 transformer_layers: int
+                 transformer_layers: int,
+                 design_details
                  ):
         super().__init__()
 
         self.context_length = context_length
+        trainer = design_details['trainer']
 
         if isinstance(vision_layers, (tuple, list)):
             vision_heads = vision_width * 32 // 64
@@ -266,14 +324,36 @@ class CLIP(nn.Module):
             )
         else:
             vision_heads = vision_width // 64
-            self.visual = VisionTransformer(
-                input_resolution=image_resolution,
-                patch_size=vision_patch_size,
-                width=vision_width,
-                layers=vision_layers,
-                heads=vision_heads,
-                output_dim=embed_dim
-            )
+            if trainer == "UPLTrainer":
+                self.visual = VisionTransformer_UPL(
+                    input_resolution=image_resolution,
+                    patch_size=vision_patch_size,
+                    width=vision_width,
+                    layers=vision_layers,
+                    heads=vision_heads,
+                    output_dim=embed_dim,
+                    design_details=design_details
+                )
+            else:
+                self.visual = VisionTransformer(
+                    input_resolution=image_resolution,
+                    patch_size=vision_patch_size,
+                    width=vision_width,
+                    layers=vision_layers,
+                    heads=vision_heads,
+                    output_dim=embed_dim,
+                    design_details=design_details
+                )
+        #else:
+        #    vision_heads = vision_width // 64
+        #    self.visual = VisionTransformer(
+        #        input_resolution=image_resolution,
+        #        patch_size=vision_patch_size,
+        #        width=vision_width,
+        #        layers=vision_layers,
+        #        heads=vision_heads,
+        #        output_dim=embed_dim
+        #    )
 
         self.transformer = Transformer(
             width=transformer_width,
@@ -352,7 +432,7 @@ class CLIP(nn.Module):
         return x
 
     def forward(self, image, text):
-        image_features = self.encode_image(image)
+        image_features = self.c(image)
         text_features = self.encode_text(text)
 
         # normalized features
@@ -392,17 +472,22 @@ def convert_weights(model: nn.Module):
     model.apply(_convert_weights_to_fp16)
 
 
-def build_model(state_dict: dict):
+
+#Maple used this
+
+def build_model(state_dict: dict, design_details):
     vit = "visual.proj" in state_dict
 
     if vit:
         vision_width = state_dict["visual.conv1.weight"].shape[0]
-        vision_layers = len([k for k in state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
+        vision_layers = len(
+            [k for k in state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
         vision_patch_size = state_dict["visual.conv1.weight"].shape[-1]
         grid_size = round((state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
         image_resolution = vision_patch_size * grid_size
     else:
-        counts: list = [len(set(k.split(".")[2] for k in state_dict if k.startswith(f"visual.layer{b}"))) for b in [1, 2, 3, 4]]
+        counts: list = [len(set(k.split(".")[2] for k in state_dict if k.startswith(f"visual.layer{b}"))) for b in
+                        [1, 2, 3, 4]]
         vision_layers = tuple(counts)
         vision_width = state_dict["visual.layer1.0.conv1.weight"].shape[0]
         output_width = round((state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
@@ -420,7 +505,7 @@ def build_model(state_dict: dict):
     model = CLIP(
         embed_dim,
         image_resolution, vision_layers, vision_width, vision_patch_size,
-        context_length, vocab_size, transformer_width, transformer_heads, transformer_layers
+        context_length, vocab_size, transformer_width, transformer_heads, transformer_layers, design_details
     )
 
     for key in ["input_resolution", "context_length", "vocab_size"]:
@@ -428,5 +513,53 @@ def build_model(state_dict: dict):
             del state_dict[key]
 
     convert_weights(model)
-    model.load_state_dict(state_dict)
+    try:
+        model.load_state_dict(state_dict)
+    except:
+        missing_keys, _ = model.load_state_dict(state_dict, strict=False)
+        print('Weights not found for some missing keys: ', missing_keys)
     return model.eval()
+
+
+
+
+
+#UPL used this
+#def build_model(state_dict: dict, design_details):
+#    vit = "visual.proj" in state_dict
+
+#    if vit:
+#        vision_width = state_dict["visual.conv1.weight"].shape[0]
+#        vision_layers = len([k for k in state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
+#        vision_patch_size = state_dict["visual.conv1.weight"].shape[-1]
+#        grid_size = round((state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
+#        image_resolution = vision_patch_size * grid_size
+#    else:
+#        counts: list = [len(set(k.split(".")[2] for k in state_dict if k.startswith(f"visual.layer{b}"))) for b in [1, 2, 3, 4]]
+#        vision_layers = tuple(counts)
+#        vision_width = state_dict["visual.layer1.0.conv1.weight"].shape[0]
+#        output_width = round((state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
+#        vision_patch_size = None
+#        assert output_width ** 2 + 1 == state_dict["visual.attnpool.positional_embedding"].shape[0]
+#        image_resolution = output_width * 32
+
+#    embed_dim = state_dict["text_projection"].shape[1]
+#    context_length = state_dict["positional_embedding"].shape[0]
+#    vocab_size = state_dict["token_embedding.weight"].shape[0]
+#    transformer_width = state_dict["ln_final.weight"].shape[0]
+#    transformer_heads = transformer_width // 64
+#    transformer_layers = len(set(k.split(".")[2] for k in state_dict if k.startswith(f"transformer.resblocks")))
+
+#    model = CLIP(
+#        embed_dim,
+#        image_resolution, vision_layers, vision_width, vision_patch_size,
+#        context_length, vocab_size, transformer_width, transformer_heads, transformer_layers
+#    )
+
+#    for key in ["input_resolution", "context_length", "vocab_size"]:
+#        if key in state_dict:
+#            del state_dict[key]
+
+#    convert_weights(model)
+#    model.load_state_dict(state_dict)
+#    return model.eval()

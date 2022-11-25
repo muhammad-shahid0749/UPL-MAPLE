@@ -37,3 +37,4 @@ MODEL:
 TRAINER:
   UPLTrainer:
     CTX_INIT: "a photo of a"
+    PROMPT_DEPTH: 9
