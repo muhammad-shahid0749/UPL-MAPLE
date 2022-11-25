@@ -133,7 +133,6 @@ class TextEncoder(nn.Module):
         x = x.permute(1, 0, 2)  # NLD -> LND
         # Pass as the list, as nn.sequential cannot process multiple arguments in the forward pass
         combined = [x, compound_prompts_deeper_text, 0]  # third argument is the counter which denotes depth of prompt
-        
         outputs = self.transformer(combined)
         x = outputs[0]  # extract the x back from here
         x = x.permute(1, 0, 2)  # LND -> NLD
