@@ -89,7 +89,7 @@ def load_clip_to_cpu(cfg):
                       "vision_depth": 0,
                       "language_depth": 0, "vision_ctx": 0,
                       "language_ctx": 0,
-                      "maple_length": cfg.TRAINER.UPLTrainer.N_CTX}
+                      "UPLTrainer_length": cfg.TRAINER.UPLTrainer.N_CTX}
     model = clip.build_model(state_dict or model.state_dict(), design_details)
     #UPL Code
     #model = clip.build_model(state_dict or model.state_dict())
@@ -387,7 +387,8 @@ class PromptLearner(nn.Module):
 class CustomCLIP(nn.Module):
     def __init__(self, cfg, classnames, clip_model):
         super().__init__()
-        self.prompt_learner = PromptLearner(cfg, classnames, clip_model)
+        #self.prompt_learner = PromptLearner(cfg, classnames, clip_model)
+        self.prompt_learner = MultiModalPromptLearner(cfg, classnames, clip_model)
         self.tokenized_prompts = self.prompt_learner.tokenized_prompts
         self.image_encoder = clip_model.visual
         self.text_encoder = TextEncoder(clip_model)
@@ -428,15 +429,29 @@ class CustomCLIP(nn.Module):
     
     def zero_shot_forward(self, image, device):
         temp = CUSTOM_TEMPLATES[self.cfg.DATASET.NAME]
+        tokenized_prompts = self.tokenized_prompts
         prompts = [temp.format(c.replace("_", " ")) for c in self.classnames]
         prompts = torch.cat([clip.tokenize(p) for p in prompts])
+        print("zero_shot_forward: Prompts from function",prompts)
+        p, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
+        
+        print("zero_shot_forward: Prompts from prompt learner",prompts)
+
         prompts = prompts.to(device)
         
+        #text_features = self.text_encoder(prompts, tokenized_prompts, deep_compound_prompts_text)
+        #image_features = self.image_encoder(image.type(self.dtype), shared_ctx, deep_compound_prompts_vision)
+
+        
         with torch.no_grad():
+            print("before encoding image")
             text_features = self.clip.encode_text(prompts)
+            print("after encoding image")
+            #text_features = self.clip.encode_text(prompts,tokenized_prompts, deep_compound_prompts_text)
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)
 
-        image_features = self.clip.encode_image(image)
+        #image_features = self.clip.encode_image(image)
+        image_features = self.clip.visual(image.type(self.clip.dtype), shared_ctx, deep_compound_prompts_vision)
 
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         logit_scale = self.clip.logit_scale.exp()
