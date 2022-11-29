@@ -405,13 +405,34 @@ class CustomCLIP(nn.Module):
         #UPL Image features
         #image_features = self.image_encoder(image.type(self.dtype))
         #prompts = self.prompt_learner()
-        
         #text_features = self.text_encoder(prompts, tokenized_prompts)
-
         #image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         #text_features = text_features / text_features.norm(dim=-1, keepdim=True)
         #logits = logit_scale * image_features @ text_features.t()
+        
+        #Maple Code
+        prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
+        text_features = self.text_encoder(prompts, tokenized_prompts, deep_compound_prompts_text)
+        image_features = self.image_encoder(image.type(self.dtype), shared_ctx, deep_compound_prompts_vision)
 
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        logits = logit_scale * image_features @ text_features.t()
+        #if self.prompt_learner.training:
+        #    return F.cross_entropy(logits, label)
+
+        return logits, image_features, text_features
+    
+    def zero_shot_forward(self, image, device):
+        tokenized_prompts = self.tokenized_prompts
+        logit_scale = self.logit_scale.exp()
+        #UPL Image features
+        #image_features = self.image_encoder(image.type(self.dtype))
+        #prompts = self.prompt_learner()
+        #text_features = self.text_encoder(prompts, tokenized_prompts)
+        #image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        #text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        #logits = logit_scale * image_features @ text_features.t()
         
         #Maple Code
         prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
@@ -425,38 +446,34 @@ class CustomCLIP(nn.Module):
         #    return F.cross_entropy(logits, label)
 
 
-        return logits, image_features, text_features
-    
-    def zero_shot_forward(self, image, device):
-        temp = CUSTOM_TEMPLATES[self.cfg.DATASET.NAME]
-        tokenized_prompts = self.tokenized_prompts
-        prompts = [temp.format(c.replace("_", " ")) for c in self.classnames]
-        prompts = torch.cat([clip.tokenize(p) for p in prompts])
-        print("zero_shot_forward: Prompts from function",prompts)
-        prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
+        #zero shot code start from here
+        #temp = CUSTOM_TEMPLATES[self.cfg.DATASET.NAME]
+        #tokenized_prompts = self.tokenized_prompts
+        #prompts = [temp.format(c.replace("_", " ")) for c in self.classnames]
+        #prompts = torch.cat([clip.tokenize(p) for p in prompts])
+        #print("zero_shot_forward: Prompts from function",prompts)
+        #prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
         
-        print("zero_shot_forward: Prompts from prompt learner",prompts)
+        #print("zero_shot_forward: Prompts from prompt learner",prompts)
 
-        #prompts = prompts.to(device)
+        ##prompts = prompts.to(device)
+        ##text_features = self.text_encoder(prompts, tokenized_prompts, deep_compound_prompts_text)
+        ##image_features = self.image_encoder(image.type(self.dtype), shared_ctx, deep_compound_prompts_vision)
         
-        #text_features = self.text_encoder(prompts, tokenized_prompts, deep_compound_prompts_text)
-        #image_features = self.image_encoder(image.type(self.dtype), shared_ctx, deep_compound_prompts_vision)
-
-        
-        with torch.no_grad():
-            print("before encoding image")
-            #text_features = self.clip.encode_text(prompts)
-            text_features = self.clip.encode_text(prompts,tokenized_prompts, deep_compound_prompts_text)
+        #with torch.no_grad():
+        #    print("before encoding image")
+        #    #text_features = self.clip.encode_text(prompts)
+        #    text_features = self.clip.encode_text(prompts,tokenized_prompts, deep_compound_prompts_text)
             
-            print("after encoding image")
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        #    print("after encoding image")
+        #    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
 
-        #image_features = self.clip.encode_image(image)
-        image_features = self.clip.visual(image.type(self.clip.dtype), shared_ctx, deep_compound_prompts_vision)
+        ##image_features = self.clip.encode_image(image)
+        #image_features = self.clip.visual(image.type(self.clip.dtype), shared_ctx, deep_compound_prompts_vision)
 
-        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-        logit_scale = self.clip.logit_scale.exp()
-        logits = logit_scale * image_features @ text_features.t()
+        #image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        #logit_scale = self.clip.logit_scale.exp()
+        #logits = logit_scale * image_features @ text_features.t()
         return logits, image_features, text_features
 
 
