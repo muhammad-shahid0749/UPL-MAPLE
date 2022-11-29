@@ -86,6 +86,7 @@ def extend_cfg(cfg):
 
     cfg.TRAINER.UPLTrainer = CN()
     cfg.TRAINER.UPLTrainer.N_CTX = 16  # number of context vectors
+    cfg.TRAINER.UPLTrainer.N_CTX = 2  # number of context vectors
     cfg.TRAINER.UPLTrainer.CSC = False  # class-specific context
     cfg.TRAINER.UPLTrainer.CTX_INIT = ""  # initialization words
     cfg.TRAINER.UPLTrainer.PREC = "fp16"  # fp16, fp32, amp

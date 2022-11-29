@@ -398,7 +398,7 @@ class CustomCLIP(nn.Module):
         self.classnames = classnames
         self.cfg = cfg
 
-    def forward(self, image):
+    def forward(self, image,label=None):
         print("In Custom CLIP Forward fucntion")
         tokenized_prompts = self.tokenized_prompts
         logit_scale = self.logit_scale.exp()
@@ -433,11 +433,11 @@ class CustomCLIP(nn.Module):
         prompts = [temp.format(c.replace("_", " ")) for c in self.classnames]
         prompts = torch.cat([clip.tokenize(p) for p in prompts])
         print("zero_shot_forward: Prompts from function",prompts)
-        p, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
+        prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
         
         print("zero_shot_forward: Prompts from prompt learner",prompts)
 
-        prompts = prompts.to(device)
+        #prompts = prompts.to(device)
         
         #text_features = self.text_encoder(prompts, tokenized_prompts, deep_compound_prompts_text)
         #image_features = self.image_encoder(image.type(self.dtype), shared_ctx, deep_compound_prompts_vision)
@@ -445,9 +445,10 @@ class CustomCLIP(nn.Module):
         
         with torch.no_grad():
             print("before encoding image")
-            text_features = self.clip.encode_text(prompts)
+            #text_features = self.clip.encode_text(prompts)
+            text_features = self.clip.encode_text(prompts,tokenized_prompts, deep_compound_prompts_text)
+            
             print("after encoding image")
-            #text_features = self.clip.encode_text(prompts,tokenized_prompts, deep_compound_prompts_text)
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)
 
         #image_features = self.clip.encode_image(image)
